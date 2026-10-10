@@ -21,6 +21,9 @@ public class Campaign {
     private int remainingStock;
 
     private boolean active;
+    
+    @Column(name = "user_voucher_limit")
+    private int userVoucherLimit;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -34,4 +37,6 @@ public class Campaign {
     public void setRemainingStock(int remainingStock) { this.remainingStock = remainingStock; }
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
+	public int getUserVoucherLimit() { return userVoucherLimit; }
+	public void setUserVoucherLimit(int userVoucherLimit) { this.userVoucherLimit = userVoucherLimit; }
 }

@@ -50,6 +50,7 @@ public class CampaignStatsService {
         stats.setRemainingStock(campaign.getRemainingStock());
         stats.setRedeemedCount(redeemed);
         stats.setActiveVoucherCount(active);
+        stats.setUserVoucherLimit(campaign.getUserVoucherLimit());
         return stats;
     }
 
