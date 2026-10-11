@@ -28,3 +28,10 @@ CREATE TABLE redemption (
     user_id     VARCHAR(80) NOT NULL,
     created_at  TIMESTAMP   NOT NULL
 );
+
+CREATE TABLE user_campaign_quota (
+    user_id     VARCHAR(80) NOT NULL,
+    campaign_id BIGINT      NOT NULL,
+    used_count  INT         NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, campaign_id)
+);

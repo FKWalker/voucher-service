@@ -3,14 +3,17 @@ package com.prizm.campaign.service;
 import com.prizm.campaign.dto.RedeemResponse;
 import com.prizm.campaign.model.Campaign;
 import com.prizm.campaign.model.Redemption;
+import com.prizm.campaign.model.UserCampaignQuota;
 import com.prizm.campaign.model.Voucher;
 import com.prizm.campaign.repository.CampaignRepository;
+import com.prizm.campaign.repository.QuotaRepository;
 import com.prizm.campaign.repository.RedemptionRepository;
 import com.prizm.campaign.repository.VoucherRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Date;
 
@@ -27,60 +30,88 @@ public class VoucherService {
 
     @Autowired
     private RedemptionRepository redemptionRepository;
+    
+    @Autowired
+    private QuotaRepository quotaRepository;
 
     @Autowired
     private AuditClient auditClient;
 
+    @Transactional
     public RedeemResponse redeem(String code, String userId) {
 
+        // 1. Find voucher
         Voucher voucher = voucherRepository.findByCode(code);
         if (voucher == null) {
             return RedeemResponse.fail("Voucher not found");
         }
 
-        if ("REDEEMED".equals(voucher.getStatus())) {
-            return RedeemResponse.fail("Voucher already redeemed");
-        }
-
-        if ("VOID".equals(voucher.getStatus())) {
-            return RedeemResponse.fail("Voucher is void");
-        }
-
-        Campaign campaign = campaignRepository.findById(voucher.getCampaignId()).get();
+        // 2. Find campaign (needed for limit check)
+        Campaign campaign = campaignRepository.findById(voucher.getCampaignId())
+                .orElseThrow(() -> new RuntimeException("Campaign not found"));
 
         if (!campaign.isActive()) {
             return RedeemResponse.fail("Campaign is not active");
         }
-
+        
         if (campaign.getRemainingStock() <= 0) {
             return RedeemResponse.fail("Campaign out of stock");
         }
-        
-        int userRedemptionCount = voucherRepository.countByCampaignIdAndRedeemedByAndStatus(campaign.getId(), userId, "REDEEMED");
-        
-        if(userRedemptionCount >= campaign.getUserVoucherLimit()){
-        	return RedeemResponse.fail("All vouchers have been redeemed for this campaign");
+
+        // 3. Lock and check user quota first
+        UserCampaignQuota quota;
+        try {
+            quota = quotaRepository.findByUserIdAndCampaignIdWithLock(userId, campaign.getId())
+                .orElseGet(() -> quotaRepository.save(new UserCampaignQuota(userId, campaign.getId(), 0)));
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            quota = quotaRepository.findByUserIdAndCampaignIdWithLock(userId, campaign.getId())
+                .orElseThrow(() -> new RuntimeException("Failed to initialize user quota"));
         }
 
-        voucher.setStatus("REDEEMED");
-        voucher.setRedeemedBy(userId);
-        voucher.setRedeemedAt(new Date());
-        voucherRepository.save(voucher);
+        if (quota.getUsedCount() >= campaign.getUserVoucherLimit()) {
+            return RedeemResponse.fail("User limit reached for this campaign");
+        }
 
-        campaign.setRemainingStock(campaign.getRemainingStock() - 1);
-        campaignRepository.save(campaign);
+        // 4. ATOMIC CLAIM VOUCHER FIRST
+        int updatedVoucherRows = voucherRepository.claimVoucher(voucher.getId(), userId, new Date());
+        if (updatedVoucherRows == 0) {
+            // Since NO stock or quota has been changed yet, we can return a clean response 
+            // directly WITHOUT needing a rollback! Re-fetch to see why it failed.
+            Voucher currentVoucher = voucherRepository.findById(voucher.getId()).orElse(voucher);
+            
+            if ("REDEEMED".equals(currentVoucher.getStatus())) {
+                return RedeemResponse.fail("Voucher has already been redeemed");
+            } else if ("VOID".equals(currentVoucher.getStatus())) {
+                return RedeemResponse.fail("Voucher is void");
+            }
+            return RedeemResponse.fail("Voucher is invalid");
+        }
 
+        // 5. ATOMICALLY DECREMENT CAMPAIGN STOCK SECOND
+        int updatedCampaignRows = campaignRepository.decrementStock(campaign.getId());
+        if (updatedCampaignRows == 0) {
+            // If stock ran out at the exact same millisecond, throw an exception 
+            // to automatically roll back the voucher claim we just did!
+            throw new RuntimeException("Campaign out of stock");
+        }
+
+        // 6. Increment user quota and save
+        quota.setUsedCount(quota.getUsedCount() + 1);
+        quotaRepository.save(quota);
+
+        // 7. Save redemption history
         Redemption redemption = new Redemption(
                 voucher.getId(), campaign.getId(), userId, new Date());
         redemptionRepository.save(redemption);
 
+        // 8. Audit log (Async/Safe)
         try {
             auditClient.recordRedemption(campaign.getClientCode(), voucher.getCode(), userId);
         } catch (Exception e) {
-            log.error("audit call failed");
+            log.error("audit call failed", e);
         }
 
-        return RedeemResponse.ok(voucher.getCode(), campaign.getRemainingStock());
+        return RedeemResponse.ok(voucher.getCode(), campaign.getRemainingStock() - 1);
     }
 
     public RedeemResponse voidVoucher(String code) {
