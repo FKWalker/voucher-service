@@ -55,6 +55,12 @@ public class VoucherService {
         if (campaign.getRemainingStock() <= 0) {
             return RedeemResponse.fail("Campaign out of stock");
         }
+        
+        int userRedemptionCount = voucherRepository.countByCampaignIdAndRedeemedByAndStatus(campaign.getId(), userId, "REDEEMED");
+        
+        if(userRedemptionCount >= campaign.getUserVoucherLimit()){
+        	return RedeemResponse.fail("All vouchers have been redeemed for this campaign");
+        }
 
         voucher.setStatus("REDEEMED");
         voucher.setRedeemedBy(userId);
