@@ -12,24 +12,24 @@
  - Updated the user quota, redemption record, and audit record only after the relevant operations succeeded.
  
 2. Anything you noticed but deliberately did not change, and your reasoning
-I noticed that the audit client, audit URL, and API key are hardcoded. I deliberately left them unchanged to keep the scope focused on the redemption and concurrency issues.
+- I noticed that the audit client, audit URL, and API key are hardcoded. I deliberately left them unchanged to keep the scope focused on the redemption and    concurrency issues.
 Ideally, these values should be externalized into environment-specific configuration, with sensitive credentials managed through a secret management solution. This would improve security, maintainability, and flexibility across different environments.
 
 3. What you'd do next if you had another day
-If I had another day, I would evaluate introducing Redis for distributed locking and atomic operations, particularly for a multi-pod deployment handling thousands of concurrent requests.
+- If I had another day, I would evaluate introducing Redis for distributed locking and atomic operations, particularly for a multi-pod deployment handling thousands of concurrent requests.
 Database-level atomic updates and row locking provide strong consistency, but under extreme traffic, database contention could become a bottleneck.
 Redis could help reduce contention for suitable operations. 
 
 4. What did you get wrong first, and how did you notice?
-Initially, I approached the problem as a straightforward CRUD operation: check the voucher and campaign stock, then update their statuses and quantities.
+- Initially, I approached the problem as a straightforward CRUD operation: check the voucher and campaign stock, then update their statuses and quantities.
 However, I realized that this approach was unsafe under concurrent requests. Multiple requests could read the same initial values and attempt to update them simultaneously, potentially causing the same voucher to be redeemed more than once or campaign stock to become negative.
 This made me reconsider the design and adopt atomic database operations and locking mechanisms to handle race conditions safely.
 
 5. Which AI suggestion did you reject, and why?
-The AI suggested using persistent locking around voucher and campaign updates. I rejected the approach of locking the entire campaign because it would unnecessarily serialize redemptions for different vouchers within the same campaign.
+- The AI suggested using persistent locking around voucher and campaign updates. I rejected the approach of locking the entire campaign because it would unnecessarily serialize redemptions for different vouchers within the same campaign.
 For example, if 50 users attempted to redeem 50 different vouchers in the same campaign, a campaign-wide lock could force their requests to wait for one another, significantly reducing throughput.
 Instead, I preferred a more granular approach that allows independent voucher redemptions to proceed concurrently while protecting shared resources, such as campaign stock and individual user quotas, against race conditions.
 
 6. What took you the longest?
-The most time-consuming part was evaluating the different approaches suggested by AI and determining which one best suited this voucher redemption use case.
+- The most time-consuming part was evaluating the different approaches suggested by AI and determining which one best suited this voucher redemption use case.
 I needed to understand the trade-offs between database locking, atomic updates, and distributed locking, particularly in terms of data consistency, concurrency, scalability, and implementation complexity.
