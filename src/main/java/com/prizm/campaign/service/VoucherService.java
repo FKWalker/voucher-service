@@ -90,9 +90,13 @@ public class VoucherService {
         // 5. ATOMICALLY DECREMENT CAMPAIGN STOCK SECOND
         int updatedCampaignRows = campaignRepository.decrementStock(campaign.getId());
         if (updatedCampaignRows == 0) {
-            // If stock ran out at the exact same millisecond, throw an exception 
-            // to automatically roll back the voucher claim we just did!
-            throw new RuntimeException("Campaign out of stock");
+        	// Explicitly tell Spring to roll back the voucher claim & quota increment we just did!
+            org.springframework.transaction.interceptor.TransactionAspectSupport
+                .currentTransactionStatus()
+                .setRollbackOnly();
+
+            // Now we can safely return a clean response to the user
+            return RedeemResponse.fail("Campaign out of stock");
         }
 
         // 6. Increment user quota and save
